@@ -1,7 +1,7 @@
 import * as fs from "fs";
 
 
-let start = "https://www.imdb.com/chart/top/";
+let start ="";
 let maxDepth = 0;
 
 
@@ -12,18 +12,13 @@ function getLinks(html){
     
     let links = [];
     while (i < html.length) {
-        i = html.indexOf("href", i); 
+        i = html.indexOf(" href", i); 
         if(i === -1){
+            i++;
             break;
         }
 
-        let prev = html[i-1];
-        if(prev && /[a-z0-9_-]/i.test(prev)){
-            i+=4;
-            continue;
-        }
-
-        i+=4;
+        i+=5;
 
         while (html[i] && /\s/.test(html[i])) i++;
 
@@ -61,17 +56,19 @@ function getText(html, tag, clss=""){
 
         while (html[i] && /\s/.test(html[i])) i++;
 
-        if (html.indexOf(tag, i) !== i) continue;
+        if (html.indexOf(tag, i) !== i){
+            i++;
+            continue;
+        }
         i++;
 
         if(clss.length > 0){
 
             let not = 0;
 
-            let o = html.indexOf("class", i);
+            let o = html.indexOf(" class", i);
 
             if(o === -1){
-                i++
                 break;
             }
 
@@ -89,19 +86,13 @@ function getText(html, tag, clss=""){
                 continue;
             }
 
-            let prev = html[i-1];
-            if(prev && /[a-z0-9_-]/i.test(prev)){
-                i+=5;
-                continue;
-            }
 
-            let nxt = html[i+1];
-            if(nxt && /[a-z0-9_-]/i.test(nxt)){
+            i+=6;
+
+            if(!(html[i] === " " || html[i] === "=")){
                 i++;
                 continue;
             }
-
-            i+=5;
 
             while (html[i] && /\s/.test(html[i])) i++;
 
@@ -117,7 +108,7 @@ function getText(html, tag, clss=""){
             let start = i;
             let endA = html.indexOf(quote, start);
             if(!html.slice(start, endA).split(/\s+/).includes(clss)){
-                i++;
+                i = endA;
                 continue;
             }
             i++
@@ -128,7 +119,7 @@ function getText(html, tag, clss=""){
 
             i++; //to start the text after finding >
 
-            let end = html.indexOf("<", i+1);
+            let end = html.indexOf("<", i);
 
             if(end === -1){
                 break;
@@ -148,12 +139,13 @@ function getText(html, tag, clss=""){
 
             let end = html.indexOf("<", i+1);
 
+            if(end === -1){
+                            break;
+                        }
+
             let txt = html.slice(i, end);
 
-            if(end === -1){
-                break;
-            }
-
+            
             text.push(txt);
 
             i = end+1;
@@ -170,19 +162,36 @@ let alreadyChecked = {};
 let rawdata = [];
 
 function geturl(link){
-    if(link.startsWith("http://") || link.startsWith("https://")){
+    if (link.startsWith("http://") || link.startsWith("https://")) {
         return link;
-    } else if(link.startsWith("/")){
-        let l = start + link;
-        return l;
     }
-     else {
-        let l = start + "/" + link;
-        return l;
+
+    
+    let [protocol, rest] = start.split("://");
+    let domainEnd = rest.indexOf("/");
+    let domain = domainEnd === -1 ? rest : rest.slice(0, domainEnd);
+    let basePath = domainEnd === -1 ? "" : rest.slice(domainEnd);
+
+    
+    if (link.startsWith("/")) {
+        return `${protocol}://${domain}${link}`;
     }
+
+    // Otherwise, it’s relative; combine paths
+    let fullPath = basePath.split("/").filter(Boolean); 
+    let relParts = link.split("/");
+
+    for (let part of relParts) {
+        if (part === ".") continue;            
+        else if (part === "..") fullPath.pop(); 
+        else fullPath.push(part);             
+    }
+
+    return `${protocol}://${domain}/${fullPath.join("/")}`;
 }
 
-async function crawl(url, depth = 0) {
+
+async function crawl(url, depth = 0, tag, clss) {
     if(depth > maxDepth || alreadyChecked[url] === true){
         return;
     }
@@ -192,21 +201,28 @@ async function crawl(url, depth = 0) {
     let html = await req.text();
     
     let links = getLinks(html);
-    let texts = getText(html, "h3", "ipc-title__text");
+    let texts = getText(html, tag, clss);
 
     rawdata.push({"link": url, "textArr": texts});
 
     for(let i = 0; i < links.length; i+=5){
         let chunk = links.slice(i, i+5);
         for(let link of chunk){
-            await crawl(geturl(link), depth+1);
+            await crawl(geturl(link), depth+1, tag, clss);
             console.log(link);
         }
     }
 }  
 
 
+async function beginCrawl(url, depth = 0, max = 0, tag, clss = "") {
+    start = url;
+    maxDepth = max;
+    await crawl(url, depth, tag, clss);
+}   
 
 
-await crawl(start);
+
+
+await beginCrawl("https://books.toscrape.com", 0, 0, "a");
 fs.writeFileSync('index.json', JSON.stringify(rawdata, null, 2));
